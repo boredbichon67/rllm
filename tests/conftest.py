@@ -15,24 +15,32 @@ class _FakeTorch(types.ModuleType):
 
 
 # Provide a tiny torch stub so importing rllm modules doesn't require real torch.
+# Only install the stub if the real torch package is NOT available.
 if "torch" not in sys.modules:
-    sys.modules["torch"] = _FakeTorch("torch")
+    try:
+        importlib.import_module("torch")
+    except Exception:
+        sys.modules["torch"] = _FakeTorch("torch")
 
 
 # Provide a tiny PIL stub (OpenAIEngine imports PIL.Image)
+# Only install the stub if the real PIL package is NOT available.
 if "PIL" not in sys.modules:
-    pil = types.ModuleType("PIL")
-    image_mod = types.ModuleType("PIL.Image")
+    try:
+        importlib.import_module("PIL")
+    except Exception:
+        pil = types.ModuleType("PIL")
+        image_mod = types.ModuleType("PIL.Image")
 
-    class Image:  # noqa: D401
-        """Stub PIL.Image.Image."""
+        class Image:  # noqa: D401
+            """Stub PIL.Image.Image."""
 
-        pass
+            pass
 
-    image_mod.Image = Image
-    pil.Image = image_mod
-    sys.modules["PIL"] = pil
-    sys.modules["PIL.Image"] = image_mod
+        image_mod.Image = Image
+        pil.Image = image_mod
+        sys.modules["PIL"] = pil
+        sys.modules["PIL.Image"] = image_mod
 
 
 # Provide a tiny openai stub (OpenAIEngine imports openai.AsyncOpenAI)
@@ -120,7 +128,6 @@ for _name in _STUB_MODULES:
         continue
     try:
         importlib.import_module(_name)
-        continue
     except Exception:
         sys.modules[_name] = types.ModuleType(_name)
 

@@ -4,9 +4,8 @@ Supports two execution modes:
 - 'process': subprocess via ``rllm-model-gateway`` CLI (for verl / distributed)
 - 'thread': background thread via ``create_app`` + uvicorn (for tinker / single-machine)
 
-For Tinker backends, also starts a ``TinkerBackendServer`` as the inference
-worker behind the gateway (since TinkerEngine is in-process, not a remote
-vLLM server).
+For Tinker backends, an in-process handler is injected into the gateway
+(via ``local_handler``), avoiding the need for a separate HTTP backend server.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class GatewayManager:
         self._process: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
         self._server: Any = None  # uvicorn.Server when using thread mode
-        self._backend_server: Any = None  # TinkerBackendServer for tinker
+        self._local_handler: Any = None  # in-process handler for tinker
         self._client: GatewayClient | None = None
 
     @property
@@ -69,20 +68,29 @@ class GatewayManager:
         """Start the gateway and register inference workers.
 
         For VerlEngine: registers the existing vLLM server addresses.
-        For TinkerEngine: starts a TinkerBackendServer and registers it.
+        For TinkerEngine: creates an in-process handler (no sidecar needed).
         """
-        if self.mode == "process":
-            self._start_process()
-        else:
-            self._start_thread()
+        engine_cls = type(rollout_engine).__name__
 
-        worker_urls = self._ensure_workers(rollout_engine)
-        for url in worker_urls:
-            worker_id = self.client.add_worker(url=url)
-            logger.info("Registered worker %s -> %s", worker_id, url)
+        if engine_cls == "TinkerEngine":
+            # In-process handler — no HTTP backend, no worker registration
+            from rllm.experimental.engine.tinker_adapter import create_tinker_handler
+
+            self._local_handler = create_tinker_handler(rollout_engine)
+            self._start_thread(local_handler=self._local_handler)
+        else:
+            if self.mode == "process":
+                self._start_process()
+            else:
+                self._start_thread()
+
+            worker_urls = self._ensure_workers(rollout_engine)
+            for url in worker_urls:
+                worker_id = self.client.add_worker(url=url)
+                logger.info("Registered worker %s -> %s", worker_id, url)
 
     def stop(self) -> None:
-        """Terminate the gateway (process or thread) and backend server."""
+        """Terminate the gateway (process or thread)."""
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -102,9 +110,7 @@ class GatewayManager:
             self._thread = None
             self._server = None
 
-        if self._backend_server is not None:
-            self._backend_server.stop()
-            self._backend_server = None
+        self._local_handler = None
 
     # -- Session / trace API -------------------------------------------------
 
@@ -128,32 +134,8 @@ class GatewayManager:
             addresses = rollout_engine.rollout_manager.server_addresses
             return [f"http://{addr}" if not addr.startswith("http") else addr for addr in addresses]
 
-        if engine_cls == "TinkerEngine":
-            return [self._start_tinker_backend(rollout_engine)]
-
         logger.warning("Unknown engine type %s — no workers registered", engine_cls)
         return []
-
-    def _start_tinker_backend(self, rollout_engine: RolloutEngine) -> str:
-        """Start a TinkerBackendServer wrapping TinkerEngine behind OpenAI API.
-
-        The gateway proxies to this server, which calls TinkerEngine in-process.
-        """
-        from rllm.sdk.proxy.tinker_backend_server import TinkerBackendServer
-
-        # Pick a port for the backend server (gateway port + 1)
-        backend_port = self.port + 1
-        model_name = getattr(rollout_engine, "model_name", "default")
-
-        self._backend_server = TinkerBackendServer(
-            rollout_engine=rollout_engine,
-            host=self.host,
-            port=backend_port,
-            model_name=model_name,
-        )
-        self._backend_server.start()
-        logger.info("TinkerBackendServer started at %s", self._backend_server.url)
-        return self._backend_server.url
 
     # -- Internal ------------------------------------------------------------
 
@@ -190,7 +172,7 @@ class GatewayManager:
         self._process.terminate()
         raise TimeoutError(f"Gateway did not become healthy within {_HEALTH_POLL_TIMEOUT}s")
 
-    def _start_thread(self) -> None:
+    def _start_thread(self, local_handler: Any = None) -> None:
         """Start gateway in a background thread using create_app + uvicorn."""
         import uvicorn
         from rllm_model_gateway.models import GatewayConfig
@@ -202,7 +184,7 @@ class GatewayManager:
             db_path=self.db_path,
             store_worker="sqlite" if self.db_path else "memory",
         )
-        app = create_app(config=gw_config)
+        app = create_app(config=gw_config, local_handler=local_handler)
 
         uvi_config = uvicorn.Config(
             app,

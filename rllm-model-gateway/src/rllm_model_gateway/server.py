@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -67,6 +68,7 @@ def _load_policy(dotted_path: str):
 def create_app(
     config: GatewayConfig | None = None,
     store: TraceStore | None = None,
+    local_handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> FastAPI:
     """Create and return a fully configured FastAPI application."""
     if config is None:
@@ -102,6 +104,7 @@ def create_app(
         store=store,
         strip_vllm=config.strip_vllm_fields,
         sync_traces=config.sync_traces,
+        local_handler=local_handler,
     )
     sessions = SessionManager(store)
 
