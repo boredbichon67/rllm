@@ -21,7 +21,7 @@ After install, `import rllm_telemetry` works out of the box — the framework ex
 
 ## 2. Get your API key
 
-1. Go to **https://believable-ambition-rllm-staging.up.railway.app**
+1. Go to **https://rllm-platform.up.railway.app**
 2. **Sign up** for an account
 3. Navigate to **Settings → API Key → Regenerate**
 4. Copy the key and set it as an environment variable:
@@ -37,42 +37,73 @@ export RLLM_API_KEY=rllm_<your-key>
 ### autogen-core
 
 ```python
+import asyncio
 import rllm_telemetry
 from autogen_agentchat.agents import AssistantAgent
+from autogen_core import CancellationToken
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
-model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
-agent = AssistantAgent("assistant", model_client=model_client, tools=[...])
+async def main():
+    model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
+    agent = AssistantAgent("assistant", model_client=model_client, tools=[...])
 
-rllm_telemetry.instrument(agent)  # ← this is it
+    instrumentor = rllm_telemetry.instrument(agent)  # ← this is it
 
-result = await agent.run(task="Roll a 20-sided die")
+    result = await agent.run(task="Roll a 20-sided die")
+
+    await instrumentor.close()
+    await model_client.close()
+
+asyncio.run(main())
 ```
 
 ### AG2 (AutoGen fork)
 
 ```python
+import asyncio
 import rllm_telemetry
-from autogen import AssistantAgent, UserProxyAgent
+from autogen import AssistantAgent, LLMConfig, UserProxyAgent
 
-assistant = AssistantAgent("assistant", llm_config=...)
-user = UserProxyAgent("user", human_input_mode="NEVER", ...)
+async def main():
+    assistant = AssistantAgent("assistant", llm_config=LLMConfig(...))
+    user = UserProxyAgent("user", human_input_mode="NEVER", code_execution_config=False)
 
-rllm_telemetry.instrument([assistant, user])  # ← this is it
+    instrumentor = rllm_telemetry.instrument([assistant, user])  # ← this is it
 
-user.initiate_chat(assistant, message="Roll a 20-sided die")
+    user.initiate_chat(assistant, message="Roll a 20-sided die")
+
+    await instrumentor.close()
+
+asyncio.run(main())
 ```
 
 ### Google ADK
 
 ```python
+import asyncio
 import rllm_telemetry
+from google.adk.agents.llm_agent import Agent
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import InMemoryRunner
+from google.genai import types
 
-agent = ...  # your ADK agent
-runner = InMemoryRunner(agent=agent, app_name="my_app")
+async def main():
+    agent = Agent(model=LiteLlm(model="anthropic/claude-haiku-4-5-20251001"), name="assistant", tools=[...])
+    runner = InMemoryRunner(agent=agent, app_name="my_app")
 
-rllm_telemetry.instrument(runner)  # ← this is it
+    instrumentor = rllm_telemetry.instrument(runner)  # ← this is it
+
+    session = await runner.session_service.create_session(app_name="my_app", user_id="user1")
+    content = types.Content(role="user", parts=[types.Part.from_text(text="Roll a 20-sided die")])
+    async for event in runner.run_async(user_id="user1", session_id=session.id, new_message=content):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if part.text:
+                    print(part.text)
+
+    await instrumentor.close()
+
+asyncio.run(main())
 ```
 
 `instrument()` auto-detects the framework. You can also call the explicit variants: `instrument_autogen_core()`, `instrument_autogen()`.
@@ -90,7 +121,7 @@ Set these before running any example:
 export RLLM_API_KEY=rllm_<your-key>
 
 # Required — at least one LLM provider key
-export OPENAI_API_KEY=sk-...        # for autogen-core and AG2 (OpenAI provider)
+export OPENAI_API_KEY=sk-...        # for autogen-core (OpenAI provider)
 export ANTHROPIC_API_KEY=sk-...     # for ADK and AG2 (Anthropic provider)
 ```
 
@@ -99,7 +130,7 @@ export ANTHROPIC_API_KEY=sk-...     # for ADK and AG2 (Anthropic provider)
 Requires `OPENAI_API_KEY`. Uses `gpt-4o-mini` by default.
 
 ```bash
-cd rllm/experimental/rllm_telemetry
+cd rllm_telemetry
 
 # Default (gpt-4o-mini)
 python examples/autogen_core_example.py
@@ -113,7 +144,7 @@ python examples/autogen_core_example.py --model gpt-4o
 Uses Anthropic by default. Pass `--provider openai` for OpenAI.
 
 ```bash
-cd rllm/experimental/rllm_telemetry
+cd rllm_telemetry
 
 # Default (Anthropic claude-haiku-4-5)
 python examples/ag2_example.py
@@ -127,13 +158,26 @@ python examples/ag2_example.py --provider openai --model gpt-4o-mini
 Uses Anthropic via LiteLLM by default. Any LiteLLM model string works.
 
 ```bash
-cd rllm/experimental/rllm_telemetry
+cd rllm_telemetry
 
 # Default (Anthropic claude-haiku-4-5 via LiteLLM)
 python examples/adk_example.py
 
 # Use OpenAI via LiteLLM
 python examples/adk_example.py --model openai/gpt-4o-mini
+```
+
+### autogen-core with LiteLLM proxy
+
+Requires a running LiteLLM proxy. See `examples/autogen_core_litellm_example.py` for details.
+
+```bash
+# Terminal 1: Start LiteLLM proxy
+ANTHROPIC_API_KEY=sk-... litellm --model anthropic/claude-haiku-4-5-20251001 --port 4000
+
+# Terminal 2: Run example
+cd rllm_telemetry
+python examples/autogen_core_litellm_example.py
 ```
 
 ## What you'll see
@@ -147,18 +191,18 @@ python examples/adk_example.py --model openai/gpt-4o-mini
 
 ```python
 # Stream to the rllm observability dashboard (default)
-rllm_telemetry.instrument(agent)
+instrumentor = rllm_telemetry.instrument(agent)
 
 # Print spans to terminal only (no server, no API key needed)
-rllm_telemetry.instrument(agent, backend="stdout", agent_endpoint="")
+instrumentor = rllm_telemetry.instrument(agent, backend="stdout", agent_endpoint="")
 
 # Custom session name in the dashboard
-rllm_telemetry.instrument(agent, agent_session_name="my-experiment")
+instrumentor = rllm_telemetry.instrument(agent, agent_session_name="my-experiment")
 ```
 
 ## Cleanup
 
-When done, close the instrumentor to flush pending spans and mark the session as completed:
+Always close the instrumentor to flush pending spans and mark the session as completed:
 
 ```python
 instrumentor = rllm_telemetry.instrument(agent)
