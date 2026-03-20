@@ -8,13 +8,13 @@ Add real-time observability to your agent in **one line of code**. Supports Goog
 
 ```bash
 # For autogen-core (autogen-agentchat + autogen-ext)
-pip install "rllm[telemetry-autogen-core] @ git+https://github.com/rllm-org/rllm.git@main"
+pip install "rllm[telemetry-autogen-core] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"
 
-# For AG2 (the autogen community fork)
-pip install "rllm[telemetry-autogen] @ git+https://github.com/rllm-org/rllm.git@main"
+# For AG2 (autogen community fork)
+pip install "rllm[telemetry-autogen] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"
 
 # For Google ADK
-pip install "rllm[telemetry-adk] @ git+https://github.com/rllm-org/rllm.git@main"
+pip install "rllm[telemetry-adk] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"
 ```
 
 After install, `import rllm_telemetry` works out of the box — the framework extras only add the agent SDK dependencies.
@@ -173,6 +173,6 @@ await instrumentor.close()
 | `ValueError: An API key is required` | Set `RLLM_API_KEY` env var, or use `agent_endpoint=""` for local-only |
 | `401 Unauthorized` | Check your API key is valid (Settings → API Key) |
 | Spans don't appear in dashboard | Check the ClickHouse data source tab in Observability |
-| `ImportError: ag2 not installed` | Run `pip install "rllm[telemetry-autogen] @ git+https://github.com/rllm-org/rllm.git@main"` |
-| `ImportError: autogen_agentchat` | Run `pip install "rllm[telemetry-autogen-core] @ git+https://github.com/rllm-org/rllm.git@main"` |
-| `ImportError: google.adk` | Run `pip install "rllm[telemetry-adk] @ git+https://github.com/rllm-org/rllm.git@main"` |
+| `ImportError: ag2 not installed` | Run `pip install "rllm[telemetry-autogen] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"` |
+| `ImportError: autogen_agentchat` | Run `pip install "rllm[telemetry-autogen-core] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"` |
+| `ImportError: google.adk` | Run `pip install "rllm[telemetry-adk] @ git+https://github.com/boredbichon67/rllm.git@dev-rllm_telemetry"` |
