@@ -533,6 +533,8 @@ class AgentSpanExporter(BaseExporter):
         self._client: httpx.AsyncClient | None = None
         self._closed = False
         self._agent_session_id: str | None = None
+        self._sync_mode = False  # True when started via start_sync()
+        self._sync_pool = None  # Lazy ThreadPoolExecutor for sync span sends
 
     # ------------------------------------------------------------------
     # Public API
@@ -572,12 +574,15 @@ class AgentSpanExporter(BaseExporter):
 
     async def close(self) -> None:
         self._closed = True
-        # Complete the agent session
-        if self._agent_session_id and self._client:
+        # Complete the agent session using sync httpx (reliable regardless
+        # of event loop state). All spans were sent synchronously inline,
+        # so they've already been acknowledged by the server.
+        if self._agent_session_id:
             try:
-                await self._client.post(
+                httpx.post(
                     f"{self._config.agent_endpoint}/api/agent-sessions/{self._agent_session_id}/complete",
                     headers=self._auth_headers(),
+                    timeout=self._config.timeout_seconds,
                 )
             except Exception as exc:
                 logger.warning("Failed to complete agent session %s", self._agent_session_id)
@@ -585,8 +590,12 @@ class AgentSpanExporter(BaseExporter):
                     f"[rllm_telemetry] Failed to complete agent session {self._agent_session_id}: {exc}",
                     file=sys.stderr,
                 )
-        if self._client:
-            await self._client.aclose()
+        # Only close async client if we created one (not in sync mode)
+        if self._client and not self._sync_mode:
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass  # Event loop may already be closing
             self._client = None
         await self._inner.close()
 
@@ -614,17 +623,46 @@ class AgentSpanExporter(BaseExporter):
         return resp.json()["id"]
 
     def _schedule_send(self, span_type: SpanType, data: dict[str, Any]) -> None:
-        """Fire-and-forget async POST for a single trajectory span."""
+        """Send span to backend synchronously. Ensures delivery before close()."""
+        self._send_span_sync(span_type, data)
+
+    def _send_span_sync(self, span_type: SpanType, data: dict[str, Any]) -> None:
+        """Synchronous span POST — blocks until the server acknowledges."""
+        self._send_span_sync_impl(span_type, data)
+
+    def _send_span_sync_impl(self, span_type: SpanType, data: dict[str, Any]) -> None:
+        """Actual sync HTTP POST."""
+        if self._agent_session_id is None:
+            return
+        url = f"{self._config.agent_endpoint}/api/agent-sessions/{self._agent_session_id}/spans"
+        payload = {"type": span_type, "data": data}
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._send_span(span_type, data))
-        except RuntimeError:
-            pass  # no running loop
+            resp = httpx.post(
+                url,
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=self._config.timeout_seconds,
+            )
+            if resp.status_code >= 400:
+                msg = f"[rllm_telemetry] Span ingest returned {resp.status_code}: {resp.text[:200]}"
+                logger.warning(msg)
+                print(msg, file=sys.stderr)
+            else:
+                logger.debug("[rllm_telemetry] Sent %s → %s", span_type, resp.status_code)
+        except httpx.HTTPError as exc:
+            msg = f"[rllm_telemetry] Span ingest failed: {exc}"
+            logger.warning(msg)
+            print(msg, file=sys.stderr)
+        except Exception as exc:
+            logger.exception("[rllm_telemetry] Unexpected error sending span: %s", exc)
+            print(f"[rllm_telemetry] Unexpected error sending span: {exc}", file=sys.stderr)
 
     async def _send_span(self, span_type: SpanType, data: dict[str, Any]) -> None:
-        """POST a single trajectory span to the backend."""
-        if self._client is None or self._agent_session_id is None:
+        """Async POST a single trajectory span to the backend."""
+        if self._agent_session_id is None:
             return
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
         url = f"{self._config.agent_endpoint}/api/agent-sessions/{self._agent_session_id}/spans"
         payload = {"type": span_type, "data": data}
         try:

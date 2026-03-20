@@ -21,11 +21,12 @@ import math
 import os
 from types import SimpleNamespace
 
-import rllm_telemetry
 from google.adk.agents.llm_agent import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import InMemoryRunner
 from google.genai import types
+
+import rllm_telemetry
 from rllm_telemetry import AsyncEval, LlmJudge, compare, export_trajectories
 
 # ---------------------------------------------------------------------------

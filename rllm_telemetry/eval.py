@@ -137,7 +137,7 @@ def _resolve_exporter(
     if exporter is not None:
         return exporter
     if backend is not None:
-        config = RllmConfig(backend=backend)
+        config = RllmConfig(backend=backend, agent_endpoint="")
         return create_exporter(config)
     return None
 

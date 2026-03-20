@@ -7,11 +7,12 @@ Usage:
     ANTHROPIC_API_KEY=sk-... python examples/eval_example.py
 """
 
-import rllm_telemetry
 from google.adk.agents.llm_agent import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import InMemoryRunner
 from google.genai import types
+
+import rllm_telemetry
 from rllm_telemetry import Contains, Eval
 
 # ----- Agent definition -----

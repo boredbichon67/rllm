@@ -357,13 +357,15 @@ class RllmTelemetryPlugin(BasePlugin):
             request=request_data,
             started_at=time.time(),
         )
-        self._llm_spans[id(callback_context)] = record
+        llm_key = callback_context._invocation_context.invocation_id
+        self._llm_spans[llm_key] = record
         self._exporter.enqueue("llm.start", record.model_dump(exclude_none=True))
         return None
 
     @_safe_callback
     async def after_model_callback(self, *, callback_context: CallbackContext, llm_response: AdkLlmResponse) -> AdkLlmResponse | None:
-        record = self._llm_spans.pop(id(callback_context), None)
+        llm_key = callback_context._invocation_context.invocation_id
+        record = self._llm_spans.pop(llm_key, None)
         if record is None:
             return None
 
@@ -414,7 +416,8 @@ class RllmTelemetryPlugin(BasePlugin):
         llm_request: AdkLlmRequest,
         error: Exception,
     ) -> AdkLlmResponse | None:
-        record = self._llm_spans.pop(id(callback_context), None)
+        llm_key = callback_context._invocation_context.invocation_id
+        record = self._llm_spans.pop(llm_key, None)
         if record is not None:
             record.response = LlmResponseData(
                 error_code=type(error).__name__,
@@ -463,7 +466,8 @@ class RllmTelemetryPlugin(BasePlugin):
             args=args_data,
             started_at=time.time(),
         )
-        self._tool_spans[id(tool_context)] = record
+        tool_key = f"{ctx.invocation_id}:{tool.name}"
+        self._tool_spans[tool_key] = record
         self._exporter.enqueue("tool.start", record.model_dump(exclude_none=True))
         return None
 
@@ -476,7 +480,9 @@ class RllmTelemetryPlugin(BasePlugin):
         tool_context: ToolContext,
         result: dict,
     ) -> dict | None:
-        record = self._tool_spans.pop(id(tool_context), None)
+        ctx = tool_context._invocation_context
+        tool_key = f"{ctx.invocation_id}:{tool.name}"
+        record = self._tool_spans.pop(tool_key, None)
         if record is None:
             return None
 
@@ -506,7 +512,9 @@ class RllmTelemetryPlugin(BasePlugin):
         tool_context: ToolContext,
         error: Exception,
     ) -> dict | None:
-        record = self._tool_spans.pop(id(tool_context), None)
+        ctx = tool_context._invocation_context
+        tool_key = f"{ctx.invocation_id}:{tool.name}"
+        record = self._tool_spans.pop(tool_key, None)
         if record is not None:
             record.error = f"{type(error).__name__}: {error}"
             record.ended_at = time.time()

@@ -7,11 +7,12 @@ Usage:
 import asyncio
 import random
 
-import rllm_telemetry
 from google.adk.agents.llm_agent import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import InMemoryRunner
 from google.genai import types
+
+import rllm_telemetry
 
 # ----- Tools -----
 
